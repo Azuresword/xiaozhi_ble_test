@@ -1,21 +1,17 @@
 #include "iot/thing.h"
 #include "board.h"
-#include "audio_codec.h"
-
 #include <driver/gpio.h>
 #include <esp_log.h>
-
-
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "driver/mcpwm_prelude.h"
+#include "driver/uart.h"
 
-
-
-
-#define TAG "Lamp"
+#define TAG "Arm"
+#define UART_PORT UART_NUM_0
+#define BUF_SIZE 1024
 
 #define SERVO_MIN_PULSEWIDTH_US 500  // Minimum pulse width in microsecond
 #define SERVO_MAX_PULSEWIDTH_US 2500  // Maximum pulse width in microsecond
@@ -31,11 +27,11 @@ static inline uint32_t example_angle_to_compare(int angle)
     return (angle - SERVO_MIN_DEGREE) * (SERVO_MAX_PULSEWIDTH_US - SERVO_MIN_PULSEWIDTH_US) / (SERVO_MAX_DEGREE - SERVO_MIN_DEGREE) + SERVO_MIN_PULSEWIDTH_US;
 }
 
-
-
 namespace iot {
-    class Lamp : public Thing {
-        private:
+
+// 这里仅定义 Arm 的属性和方法，不包含具体的实现
+class Arm : public Thing {
+private:
     bool power_ = false;
     mcpwm_cmpr_handle_t comparator = NULL;
     void example_ledc_init(void) {
@@ -90,9 +86,21 @@ namespace iot {
     }
 
 public:
-Lamp() : Thing("Arm", "你的手臂，可以运动"), power_(false) {
+    Arm() : Thing("Arm", "你的手臂，可以运动"), power_(false) {
         // Set the LEDC peripheral configuration
         example_ledc_init();
+
+        // Configure UART
+        uart_config_t uart_config = {
+            .baud_rate = 115200,
+            .data_bits = UART_DATA_8_BITS,
+            .parity = UART_PARITY_DISABLE,
+            .stop_bits = UART_STOP_BITS_1,
+            .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+            .source_clk = UART_SCLK_DEFAULT,
+        };
+        ESP_ERROR_CHECK(uart_driver_install(UART_PORT, BUF_SIZE * 2, 0, 0, NULL, 0));
+        ESP_ERROR_CHECK(uart_param_config(UART_PORT, &uart_config));
 
         // 定义设备的属性
         properties_.AddBooleanProperty("power", "手臂是否运动", [this]() -> bool {
@@ -103,25 +111,35 @@ Lamp() : Thing("Arm", "你的手臂，可以运动"), power_(false) {
         methods_.AddMethod("TurnOn", "手臂运用", ParameterList(), [this](const ParameterList& parameters) {
             power_ = true;
             int angle = 0;
-                ESP_LOGI(TAG, "Angle of rotation: %d", angle);
-                ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
-                //Add delay, since it takes time for servo to rotate, usually 200ms/60degree rotation under 5V power supply
-                vTaskDelay(pdMS_TO_TICKS(500));
-                angle = 20;
-                ESP_LOGI(TAG, "Angle of rotation: %d", angle);
-                ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
-                vTaskDelay(pdMS_TO_TICKS(500));
-                angle = 40;
-                ESP_LOGI(TAG, "Angle of rotation: %d", angle);
-                ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
-                vTaskDelay(pdMS_TO_TICKS(500));
-                angle = 60;
-                ESP_LOGI(TAG, "Angle of rotation: %d", angle);
-                ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
-                vTaskDelay(pdMS_TO_TICKS(500));
-                angle = -60;
-                ESP_LOGI(TAG, "Angle of rotation: %d", angle);
-                ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
+            const char* move_msg = "MOVE\n";
+            uart_write_bytes(UART_PORT, move_msg, strlen(move_msg));
+            ESP_LOGI(TAG, "Angle of rotation: %d", angle);
+            ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
+            //Add delay, since it takes time for servo to rotate, usually 200ms/60degree rotation under 5V power supply
+            vTaskDelay(pdMS_TO_TICKS(500));
+
+            angle = 20;
+            uart_write_bytes(UART_PORT, move_msg, strlen(move_msg));
+            ESP_LOGI(TAG, "Angle of rotation: %d", angle);
+            ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
+            vTaskDelay(pdMS_TO_TICKS(500));
+
+            angle = 40;
+            uart_write_bytes(UART_PORT, move_msg, strlen(move_msg));
+            ESP_LOGI(TAG, "Angle of rotation: %d", angle);
+            ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
+            vTaskDelay(pdMS_TO_TICKS(500));
+
+            angle = 60;
+            uart_write_bytes(UART_PORT, move_msg, strlen(move_msg));
+            ESP_LOGI(TAG, "Angle of rotation: %d", angle);
+            ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
+            vTaskDelay(pdMS_TO_TICKS(500));
+
+            angle = -60;
+            uart_write_bytes(UART_PORT, move_msg, strlen(move_msg));
+            ESP_LOGI(TAG, "Angle of rotation: %d", angle);
+            ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, example_angle_to_compare(angle)));
         });
 
         methods_.AddMethod("TurnOff", "手臂返回原来的位置", ParameterList(), [this](const ParameterList& parameters) {
@@ -129,51 +147,8 @@ Lamp() : Thing("Arm", "你的手臂，可以运动"), power_(false) {
             // ****
         });
     }
-        };
-// 这里仅定义 Lamp 的属性和方法，不包含具体的实现
-// class Lamp : public Thing {
-// private:
-// #ifdef CONFIG_IDF_TARGET_ESP32
-//     gpio_num_t gpio_num_ = GPIO_NUM_12;
-// #else
-//     gpio_num_t gpio_num_ = GPIO_NUM_18;
-// #endif
-//     bool power_ = false;
-
-//     void InitializeGpio() {
-//         gpio_config_t config = {
-//             .pin_bit_mask = (1ULL << gpio_num_),
-//             .mode = GPIO_MODE_OUTPUT,
-//             .pull_up_en = GPIO_PULLUP_DISABLE,
-//             .pull_down_en = GPIO_PULLDOWN_DISABLE,
-//             .intr_type = GPIO_INTR_DISABLE,
-//         };
-//         ESP_ERROR_CHECK(gpio_config(&config));
-//         gpio_set_level(gpio_num_, 0);
-//     }
-
-// public:
-//     Lamp() : Thing("Lamp", "一个测试用的灯"), power_(false) {
-//         InitializeGpio();
-
-//         // 定义设备的属性
-//         properties_.AddBooleanProperty("power", "灯是否打开", [this]() -> bool {
-//             return power_;
-//         });
-
-//         // 定义设备可以被远程执行的指令
-//         methods_.AddMethod("TurnOn", "打开灯", ParameterList(), [this](const ParameterList& parameters) {
-//             power_ = true;
-//             gpio_set_level(gpio_num_, 1);
-//         });
-
-//         methods_.AddMethod("TurnOff", "关闭灯", ParameterList(), [this](const ParameterList& parameters) {
-//             power_ = false;
-//             gpio_set_level(gpio_num_, 0);
-//         });
-//     }
-// };
+};
 
 } // namespace iot
 
-DECLARE_THING(Lamp);
+DECLARE_THING(Arm);

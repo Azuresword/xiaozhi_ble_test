@@ -17,7 +17,6 @@
 
 #include <driver/rtc_io.h>
 #include <esp_sleep.h>
-
 #define TAG "ZHENGCHEN_1_54TFT_WIFI"
 
 LV_FONT_DECLARE(font_puhui_20_4);
@@ -192,6 +191,7 @@ private:
         thing_manager.AddThing(iot::CreateThing("Screen"));
         thing_manager.AddThing(iot::CreateThing("Battery"));
         thing_manager.AddThing(iot::CreateThing("ESP32Temp"));
+        thing_manager.AddThing(iot::CreateThing("Chassis"));
     }
 
 public:

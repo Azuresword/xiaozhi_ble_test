@@ -1,7 +1,6 @@
 #include "thing_manager.h"
 
 #include <esp_log.h>
-
 #define TAG "ThingManager"
 
 namespace iot {
