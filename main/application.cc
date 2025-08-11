@@ -9,6 +9,7 @@
 #include "font_awesome_symbols.h"
 #include "iot/thing_manager.h"
 #include "assets/lang_config.h"
+#include "wifi_station.h" 
 
 #include <cstring>
 #include <esp_log.h>
@@ -22,6 +23,7 @@
 static const char* const STATE_STRINGS[] = {
     "unknown",
     "starting",
+    "ble_provisioning",
     "configuring",
     "idle",
     "connecting",
@@ -336,6 +338,9 @@ void Application::Start() {
 
     /* Setup the display */
     auto display = board.GetDisplay();
+    /*BLE prov*/
+    bool is_connecting = board.StartNetwork();
+
 
     /* Setup the audio codec */
     auto codec = board.GetAudioCodec();
@@ -365,10 +370,31 @@ void Application::Start() {
     }, "audio_loop", 4096 * 2, this, 8, &audio_loop_task_handle_, realtime_chat_enabled_ ? 1 : 0);
 
     /* Wait for the network to be ready */
-    board.StartNetwork();
+    //board.StartNetwork();
+    if (is_connecting) {
+        // Only if we are connecting to an existing network, proceed with network-dependent tasks
+        SetDeviceState(kDeviceStateConnecting);
 
+        // Wait for Wi-Fi connection
+        auto& wifi_station = WifiStation::GetInstance();
+        if (wifi_station.WaitForConnected(60000)) {
+            // Check for new version only after successful connection
+            //CheckNewVersion(); 
+            
+            // Start the protocol
+            protocol_->Start();
+            SetDeviceState(kDeviceStateIdle);
+        } else {
+            ESP_LOGE(TAG, "Failed to connect to Wi-Fi. Entering config mode.");
+            //board.EnterWifiConfigMode();
+        }
+    } else {
+        // We are in BLE provisioning mode. Do nothing else.
+        // The device will wait for credentials and then restart.
+        ESP_LOGI(TAG, "Device is in BLE provisioning mode. Skipping network tasks.");
+    }
     // Check for new firmware version or get the MQTT broker address
-    CheckNewVersion();
+    //CheckNewVersion();
 
     // Initialize the protocol
     display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
@@ -848,6 +874,11 @@ void Application::SetDeviceState(DeviceState state) {
 #endif
             }
             ResetDecoder();
+            break;
+        case kDeviceStateBleProvisioning:
+            display->SetStatus("ble_provsioning"); // 屏幕显示提示信息
+            display->SetEmotion("neutral");
+            led->OnStateChanged(); // LED显示特定灯效
             break;
         default:
             // Do nothing

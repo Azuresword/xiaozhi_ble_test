@@ -2,6 +2,7 @@
 #define WIFI_BOARD_H
 
 #include "board.h"
+#include "protocols/ble_provisioning.h"
 
 class WifiBoard : public Board {
 protected:
@@ -10,10 +11,11 @@ protected:
     WifiBoard();
     void EnterWifiConfigMode();
     virtual std::string GetBoardJson() override;
+    std::unique_ptr<BleProvisioning> ble_provisioner_;
 
 public:
     virtual std::string GetBoardType() override;
-    virtual void StartNetwork() override;
+    virtual bool StartNetwork() override;
     virtual Http* CreateHttp() override;
     virtual WebSocket* CreateWebSocket() override;
     virtual Mqtt* CreateMqtt() override;

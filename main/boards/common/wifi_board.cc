@@ -21,6 +21,9 @@
 #include <wifi_configuration_ap.h>
 #include <ssid_manager.h>
 
+
+#include "ble_provisioning.h"
+
 static const char *TAG = "WifiBoard";
 
 WifiBoard::WifiBoard() {
@@ -37,6 +40,7 @@ std::string WifiBoard::GetBoardType() {
 }
 
 void WifiBoard::EnterWifiConfigMode() {
+#if 0
     auto& application = Application::GetInstance();
     application.SetDeviceState(kDeviceStateWifiConfiguring);
 
@@ -62,8 +66,27 @@ void WifiBoard::EnterWifiConfigMode() {
         ESP_LOGI(TAG, "Free internal: %u minimal internal: %u", free_sram, min_free_sram);
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
-}
+#endif
+    auto& application = Application::GetInstance();
+    application.SetDeviceState(kDeviceStateBleProvisioning); // 假设我们添加了这个新状态
 
+    ble_provisioner_ = std::make_unique<BleProvisioning>();
+    ble_provisioner_->on_provisioned([this](const std::string& ssid, const std::string& password) {
+        ESP_LOGI(TAG, "BLE Provisioning successful. SSID: %s", ssid.c_str());
+        
+        // 停止BLE
+        ble_provisioner_->stop();
+        ble_provisioner_.reset();
+
+        // 保存凭据并重启
+        SsidManager::GetInstance().AddSsid(ssid, password);
+        esp_restart();
+    });
+
+    ble_provisioner_->start();
+
+}
+#if 0
 void WifiBoard::StartNetwork() {
     // User can press BOOT button while starting to enter WiFi configuration mode
     if (wifi_config_mode_) {
@@ -108,6 +131,32 @@ void WifiBoard::StartNetwork() {
         return;
     }
 }
+#endif
+
+bool WifiBoard::StartNetwork() {
+    bool force_ap = false;
+    nvs_handle_t nvs_handle;
+    if (nvs_open("storage", NVS_READONLY, &nvs_handle) == ESP_OK) {
+        int8_t force_ap_val = 0;
+        if (nvs_get_i8(nvs_handle, "force_ap", &force_ap_val) == ESP_OK && force_ap_val == 1) {
+            force_ap = true;
+        }
+        nvs_close(nvs_handle);
+    }
+
+    auto& ssid_manager = SsidManager::GetInstance();
+    if (ssid_manager.GetSsidList().empty() || force_ap) {
+        ESP_LOGI(TAG, "No Wi-Fi credentials found or force_ap is set. Entering BLE provisioning mode.");
+        EnterWifiConfigMode();
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Connecting to existing Wi-Fi...");
+    auto& wifi_station = WifiStation::GetInstance();
+    wifi_station.Start();
+    return true; // Indicates that we are attempting to connect
+}
+
 
 Http* WifiBoard::CreateHttp() {
     return new EspHttp();
