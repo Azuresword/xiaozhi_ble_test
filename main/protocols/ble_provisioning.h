@@ -31,6 +31,8 @@ public:
 
     // --- Public handle for stack access ---
     uint16_t characteristic_val_handle_ = 0; // The handle will be populated by the stack
+    // send status
+    void send_status(const std::string& code, const std::string& message);
 
 private:
     // Instance methods to handle specific events
@@ -38,7 +40,7 @@ private:
     void handle_gatt_write(uint16_t conn_handle, struct os_mbuf *om);
     void advertise();
     void on_sync();
-
+    void handle_scan_wifi();
     uint8_t own_addr_type_;
     uint16_t conn_handle_ = BLE_HS_CONN_HANDLE_NONE;
     

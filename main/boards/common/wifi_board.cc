@@ -20,8 +20,8 @@
 #include <wifi_station.h>
 #include <wifi_configuration_ap.h>
 #include <ssid_manager.h>
-
-
+#include "esp_wifi_types.h"
+#include "esp_wifi.h"
 #include "ble_provisioning.h"
 
 static const char *TAG = "WifiBoard";
@@ -67,24 +67,34 @@ void WifiBoard::EnterWifiConfigMode() {
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
 #endif
-    auto& application = Application::GetInstance();
-    application.SetDeviceState(kDeviceStateBleProvisioning); // 假设我们添加了这个新状态
+auto& application = Application::GetInstance();
+    application.SetDeviceState(kDeviceStateBleProvisioning);
+
+    // Initialize Wi-Fi stack before starting BLE
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_LOGI(TAG, "Wi-Fi initialized for scanning.");
 
     ble_provisioner_ = std::make_unique<BleProvisioning>();
     ble_provisioner_->on_provisioned([this](const std::string& ssid, const std::string& password) {
         ESP_LOGI(TAG, "BLE Provisioning successful. SSID: %s", ssid.c_str());
-        
-        // 停止BLE
+
+        // Stop BLE
         ble_provisioner_->stop();
         ble_provisioner_.reset();
 
-        // 保存凭据并重启
+        // Stop and de-initialize Wi-Fi before restarting
+        esp_wifi_stop();
+        esp_wifi_deinit();
+
+        // Save credentials and restart
         SsidManager::GetInstance().AddSsid(ssid, password);
         esp_restart();
     });
 
     ble_provisioner_->start();
-
 }
 #if 0
 void WifiBoard::StartNetwork() {
@@ -230,4 +240,80 @@ void WifiBoard::ResetWifiConfiguration() {
     vTaskDelay(pdMS_TO_TICKS(1000));
     // Reboot the device
     esp_restart();
+}
+
+void WifiBoard::TriggerWifiScan() {
+    ESP_LOGI(TAG, "Starting Wi-Fi scan...");
+
+    // The scan function is blocking, so we run it in a dedicated task
+    // to avoid blocking the main application logic.
+    xTaskCreate([](void* arg) {
+        auto* self = static_cast<WifiBoard*>(arg);
+
+        // 1. Start Scan
+        wifi_scan_config_t scan_config = {}; // Default scan config
+        esp_err_t ret = esp_wifi_scan_start(&scan_config, true);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Wi-Fi scan failed: %s", esp_err_to_name(ret));
+            // Optionally, send a failure status back to the app
+            if (self->ble_provisioner_) {
+                self->ble_provisioner_->send_status("wifi_scan_failed", "Failed to start Wi-Fi scan.");
+            }
+            vTaskDelete(NULL);
+            return;
+        }
+
+        // 2. Get Scan Results
+        uint16_t ap_count = 0;
+        esp_wifi_scan_get_ap_num(&ap_count);
+        if (ap_count == 0) {
+            ESP_LOGI(TAG, "No APs found");
+            cJSON *root = cJSON_CreateObject();
+            cJSON_AddStringToObject(root, "type", "wifi_scan_result");
+            cJSON_AddItemToObject(root, "payload", cJSON_CreateArray());
+            char* json_string = cJSON_PrintUnformatted(root);
+            if (self->ble_provisioner_) {
+                self->ble_provisioner_->send_data(json_string);
+            }
+            cJSON_free(json_string);
+            cJSON_Delete(root);
+            vTaskDelete(NULL);
+            return;
+        }
+
+        std::vector<wifi_ap_record_t> ap_records(ap_count);
+        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_count, ap_records.data()));
+
+        // 3. Format Results to JSON
+        cJSON *root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "type", "wifi_scan_result");
+
+        cJSON *payload = cJSON_CreateArray();
+        for (const auto& ap : ap_records) {
+            cJSON *ap_json = cJSON_CreateObject();
+            cJSON_AddStringToObject(ap_json, "ssid", (const char*)ap.ssid);
+            cJSON_AddNumberToObject(ap_json, "rssi", ap.rssi);
+            const char* enc_type;
+            switch (ap.authmode) {
+                case WIFI_AUTH_OPEN: enc_type = "OPEN"; break;
+                case WIFI_AUTH_WEP: enc_type = "WEP"; break;
+                case WIFI_AUTH_WPA_PSK: enc_type = "WPA_PSK"; break;
+                case WIFI_AUTH_WPA2_PSK: enc_type = "WPA2_PSK"; break;
+                case WIFI_AUTH_WPA_WPA2_PSK: enc_type = "WPA_WPA2_PSK"; break;
+                default: enc_type = "UNKNOWN"; break;
+            }
+            cJSON_AddStringToObject(ap_json, "encryption", enc_type);
+            cJSON_AddItemToArray(payload, ap_json);
+        }
+        cJSON_AddItemToObject(root, "payload", payload);
+
+        char* json_string = cJSON_PrintUnformatted(root);
+        if (self->ble_provisioner_) {
+            self->ble_provisioner_->send_data(json_string);
+        }
+
+        cJSON_free(json_string);
+        cJSON_Delete(root);
+        vTaskDelete(NULL);
+    }, "wifi_scan_task", 4096, this, 5, NULL);
 }

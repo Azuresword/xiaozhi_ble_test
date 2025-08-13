@@ -5,7 +5,7 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "host/util/util.h"
-
+#include "boards/common/wifi_board.h" 
 #include "cJSON.h"
 static const char *TAG = "BleProvisioning";
 
@@ -211,16 +211,25 @@ void BleProvisioning::handle_gatt_write(uint16_t conn_handle, struct os_mbuf *om
         data[len] = '\0';
         ESP_LOGI(TAG, "Data received: %s", data);
 
-        // 使用cJSON库解析收到的字符串
         cJSON *root = cJSON_Parse(data);
         if (root) {
-            cJSON *ssid_item = cJSON_GetObjectItem(root, "ssid");
-            cJSON *password_item = cJSON_GetObjectItem(root, "password");
-
-            // 如果成功解析出ssid和password，并且回调函数已经设置
-            if (ssid_item && password_item && on_provisioned_cb_) {
-                // 就调用回调函数，把凭据传递出去
-                on_provisioned_cb_(ssid_item->valuestring, password_item->valuestring);
+            cJSON *command_item = cJSON_GetObjectItem(root, "command");
+            if (command_item && cJSON_IsString(command_item)) {
+                const char* command = command_item->valuestring;
+                if (strcmp(command, "scan_wifi") == 0) {
+                    handle_scan_wifi();
+                } else if (strcmp(command, "connect_wifi") == 0) {
+                    cJSON *payload = cJSON_GetObjectItem(root, "payload");
+                    if (payload) {
+                        cJSON *ssid_item = cJSON_GetObjectItem(payload, "ssid");
+                        cJSON *password_item = cJSON_GetObjectItem(payload, "password");
+                        if (ssid_item && password_item && on_provisioned_cb_) {
+                            // 发送状态回执
+                            send_status("wifi_connecting", "Credentials received. Attempting to connect to Wi-Fi.");
+                            on_provisioned_cb_(ssid_item->valuestring, password_item->valuestring);
+                        }
+                    }
+                }
             }
             cJSON_Delete(root);
         }
@@ -231,23 +240,65 @@ void BleProvisioning::handle_gatt_write(uint16_t conn_handle, struct os_mbuf *om
 void BleProvisioning::on_provisioned(std::function<void(const std::string& ssid, const std::string& password)> cb) {
     on_provisioned_cb_ = cb;
 }
-
 void BleProvisioning::send_data(const std::string& json_data) {
     if (conn_handle_ == BLE_HS_CONN_HANDLE_NONE) {
         ESP_LOGW(TAG, "Not connected, cannot send data.");
         return;
     }
 
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(json_data.c_str(), json_data.length());
-    if (!om) {
-        ESP_LOGE(TAG, "Failed to allocate mbuf for notification.");
-        return;
+    // Correctly get the MTU value
+    uint16_t mtu = ble_att_mtu(conn_handle_);
+    if (mtu == 0) {
+        mtu = 23; // Fallback to default MTU if not available
     }
 
-    int rc = ble_gatts_notify_custom(conn_handle_, gatt_svr_chr_val_handle, om);
-    if (rc != 0) {
-        ESP_LOGE(TAG, "Failed to send notification: %d", rc);
-    } else {
-        ESP_LOGI(TAG, "Notification sent.");
+    const uint16_t payload_size = mtu - 3;
+    ESP_LOGI(TAG, "Sending data with MTU=%d, payload_size=%d, total_len=%zu", mtu, payload_size, json_data.length());
+
+    size_t offset = 0;
+    while (offset < json_data.length()) {
+        size_t chunk_size = std::min((size_t)payload_size, json_data.length() - offset);
+        std::string chunk = json_data.substr(offset, chunk_size);
+        
+        struct os_mbuf *om = ble_hs_mbuf_from_flat(chunk.c_str(), chunk.length());
+        if (!om) {
+            ESP_LOGE(TAG, "Failed to allocate mbuf for notification.");
+            return;
+        }
+
+        int rc = ble_gatts_notify_custom(conn_handle_, gatt_svr_chr_val_handle, om);
+        if (rc != 0) {
+            ESP_LOGE(TAG, "Failed to send notification chunk: %d", rc);
+        } else {
+            ESP_LOGD(TAG, "Sent chunk of size %d", (int)chunk.length());
+        }
+        
+        offset += chunk_size;
+        vTaskDelay(pdMS_TO_TICKS(20)); // Small delay to prevent overwhelming the BLE stack or receiver
     }
+    ESP_LOGI(TAG, "Data sending completed.");
 }
+
+void BleProvisioning::send_status(const std::string& code, const std::string& message) {
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "type", "status");
+
+    cJSON *payload = cJSON_CreateObject();
+    cJSON_AddStringToObject(payload, "code", code.c_str());
+    cJSON_AddStringToObject(payload, "message", message.c_str());
+
+    cJSON_AddItemToObject(root, "payload", payload);
+
+    char* json_string = cJSON_PrintUnformatted(root);
+    send_data(json_string);
+
+    cJSON_free(json_string);
+    cJSON_Delete(root);
+}
+
+void BleProvisioning::handle_scan_wifi() {
+    ESP_LOGI(TAG, "Scan Wi-Fi command received. Triggering scan...");
+    // Cast the generic Board instance to our specific WifiBoard to access the function
+    static_cast<WifiBoard*>(&Board::GetInstance())->TriggerWifiScan();
+}
+

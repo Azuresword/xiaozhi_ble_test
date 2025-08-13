@@ -30,7 +30,7 @@ public:
 
     inline int width() const { return width_; }
     inline int height() const { return height_; }
-
+    esp_timer_handle_t update_timer_ = nullptr;
 protected:
     int width_ = 0;
     int height_ = 0;
@@ -56,7 +56,7 @@ protected:
     std::string current_theme_name_;
 
     esp_timer_handle_t notification_timer_ = nullptr;
-    esp_timer_handle_t update_timer_ = nullptr;
+    
 
     friend class DisplayLockGuard;
     virtual bool Lock(int timeout_ms = 0) = 0;

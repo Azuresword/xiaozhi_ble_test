@@ -3,7 +3,7 @@
 
 #include "board.h"
 #include "protocols/ble_provisioning.h"
-
+#include "esp_wifi_types.h"
 class WifiBoard : public Board {
 protected:
     bool wifi_config_mode_ = false;
@@ -14,6 +14,7 @@ protected:
     std::unique_ptr<BleProvisioning> ble_provisioner_;
 
 public:
+    void TriggerWifiScan();
     virtual std::string GetBoardType() override;
     virtual bool StartNetwork() override;
     virtual Http* CreateHttp() override;

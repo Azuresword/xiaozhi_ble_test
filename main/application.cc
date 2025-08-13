@@ -23,7 +23,6 @@
 static const char* const STATE_STRINGS[] = {
     "unknown",
     "starting",
-    "ble_provisioning",
     "configuring",
     "idle",
     "connecting",
@@ -32,7 +31,8 @@ static const char* const STATE_STRINGS[] = {
     "upgrading",
     "activating",
     "fatal_error",
-    "invalid_state"
+    "invalid_state",
+    "ble_provisioning"
 };
 
 Application::Application() {
@@ -341,6 +341,21 @@ void Application::Start() {
     /*BLE prov*/
     bool is_connecting = board.StartNetwork();
 
+    if (!is_connecting) {
+        ESP_LOGI(TAG, "Device is in provisioning mode. Halting main application startup.");
+        
+        // 停止显示更新定时器，防止它在后台初始化音频编解码器导致内存不足
+        if (display && display->update_timer_ != nullptr) {
+            esp_timer_stop(display->update_timer_);
+            ESP_LOGI(TAG, "Display update timer stopped for provisioning.");
+        }
+
+        // 进入一个空闲循环，蓝牙任务会在后台继续运行
+        while (true) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+        // 代码不会执行到这里
+    }
 
     /* Setup the audio codec */
     auto codec = board.GetAudioCodec();
