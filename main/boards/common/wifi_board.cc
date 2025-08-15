@@ -79,18 +79,8 @@ auto& application = Application::GetInstance();
 
     ble_provisioner_ = std::make_unique<BleProvisioning>();
     ble_provisioner_->on_provisioned([this](const std::string& ssid, const std::string& password) {
-        ESP_LOGI(TAG, "BLE Provisioning successful. SSID: %s", ssid.c_str());
-
-        // Stop BLE
-        ble_provisioner_->stop();
-        ble_provisioner_.reset();
-
-        // Stop and de-initialize Wi-Fi before restarting
-        esp_wifi_stop();
-        esp_wifi_deinit();
-
-        // Save credentials and restart
         SsidManager::GetInstance().AddSsid(ssid, password);
+        ESP_LOGI(TAG, "Free heap before restart: %d", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         esp_restart();
     });
 
